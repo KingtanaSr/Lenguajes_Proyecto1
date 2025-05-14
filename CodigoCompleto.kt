@@ -52,7 +52,7 @@ class SExprParser {
 	Salida: ListExpr([Atom("define"), Atom("x"), Atom("42")])
 */
 
-// 
+// Tipos de valores en tiempo de ejecución.
 sealed class Value {
  	data class Number(val value: Int) : Value() {
         override fun toString() = value.toString()
