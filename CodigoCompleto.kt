@@ -1,275 +1,239 @@
-// Representa expresiones en notación S (en formato Racket)
-sealed class Expr {
-    data class Atom(val value: String) : Expr()
-    data class ListExpr(val elements: List<Expr>) : Expr()
+interface IParserExpr {
+    fun parsear(entrada: String): List<Expresion>
 }
 
-// Se encargar de tokenizar y parsear strings en objetos Expr
-class SExprParser {
-    fun parse(input: String): List<Expr> { // devuelve una lista de Exprs (expresiones).
-        val tokens = tokenize(input).toMutableList()
-        val exprs = mutableListOf<Expr>()
+interface IEvaluador {
+    fun evaluar(expresion: Expresion, entorno: Entorno): Valor
+}
+
+interface IEntorno {
+    fun definir(nombre: String, valor: Valor)
+    fun buscar(nombre: String): Valor
+    fun extender(): Entorno
+}
+
+interface IInterprete {
+    fun run(codigo: String): String
+}
+
+sealed class Expresion {
+    data class Atomo(val valor: String) : Expresion()
+    data class Lista(val elementos: List<Expresion>) : Expresion()
+}
+
+class ParserSExpresion : IParserExpr {
+    override fun parsear(entrada: String): List<Expresion> {
+        val tokens = tokenizar(entrada).toMutableList()
+        val expresiones = mutableListOf<Expresion>()
         while (tokens.isNotEmpty()) {
-            exprs.add(readFromTokens(tokens))
+            expresiones.add(leerDesdeTokens(tokens))
         }
-        return exprs
-    }
-	
-    // divide el string en tokens manejando paréntesis.
-    private fun tokenize(str: String): List<String> {
-        return str.replace("(", " ( ")
-            .replace(")", " ) ")
-            .split(Regex("\\s+"))
-            .filter { it.isNotEmpty() }
+        return expresiones
     }
 
-    // convierte los tokens en objetos Expr de forma recursiva.
-    private fun readFromTokens(tokens: MutableList<String>): Expr {
-        if (tokens.isEmpty()) error("Unexpected EOF")
-        val token = tokens.removeAt(0)
-        return when (token) {
+    private fun tokenizar(str: String): List<String> =
+        str.replace("(", " ( ")
+            .replace(")", " ) ")
+            .split(Regex("\\s+")).filter { it.isNotEmpty() }
+
+    private fun leerDesdeTokens(tokens: MutableList<String>): Expresion {
+        if (tokens.isEmpty()) error("Fin inesperado")
+        return when (val token = tokens.removeAt(0)) {
             "(" -> {
-                val exprs = mutableListOf<Expr>()
+                val exprs = mutableListOf<Expresion>()
                 while (true) {
-                    if (tokens.isEmpty()) error("Unexpected EOF")
+                    if (tokens.isEmpty()) error("Fin inesperado")
                     if (tokens[0] == ")") {
                         tokens.removeAt(0)
                         break
                     }
-                    exprs.add(readFromTokens(tokens))
+                    exprs.add(leerDesdeTokens(tokens))
                 }
-                Expr.ListExpr(exprs)
+                Expresion.Lista(exprs)
             }
-            ")" -> error("Unexpected ')'")
-            else -> Expr.Atom(token)
+            ")" -> error("')' inesperado")
+            else -> Expresion.Atomo(token)
         }
     }
 }
 
-/* 	Las 2 clases anteriores juntas se encargan de hacer esto:
-	Ejemplo:
-	Entrada: (define x 42)
-	Salida: ListExpr([Atom("define"), Atom("x"), Atom("42")])
-*/
-
-// Tipos de valores en tiempo de ejecución.
-sealed class Value {
- 	data class Number(val value: Int) : Value() {
-        override fun toString() = value.toString()
+sealed class Valor {
+    data class Numero(val valor: Int) : Valor() {
+        override fun toString() = valor.toString()
     }
-    data class Bool(val value: Boolean) : Value() {
-        override fun toString() = if (value) "#t" else "#f"
+    data class Booleano(val valor: Boolean) : Valor() {
+        override fun toString() = if (valor) "#t" else "#f"
     }
-    data class Symbol(val name: String) : Value() {
-        override fun toString() = name
+    data class Simbolo(val nombre: String) : Valor() {
+        override fun toString() = nombre
     }
-    data class Function(val params: List<String>, val body: Expr, val env: Environment) : Value() {
+    data class Funcion(val parametros: List<String>, val cuerpo: Expresion, val entorno: Entorno) : Valor() {
         override fun toString() = "#<procedure>"
     }
-    data class NativeFunction(val name: String, val fn: (List<Value>) -> Value) : Value() {
+    data class FuncionNativa(val nombre: String, val funcion: (List<Valor>) -> Valor) : Valor() {
         override fun toString() = "#<procedure>"
     }
-    object Undefined : Value() {
+    object Indefinido : Valor() {
         override fun toString() = ""
     }
-
-    override fun toString(): String = when (this) {
-        is Number -> value.toString()
-        is Bool -> if (value) "#t" else "#f"
-        is Symbol -> name
-        is Function, is NativeFunction, is BuiltinFunction -> "#<procedure>"
-        Undefined -> ""
-    }
 }
 
-abstract class BuiltinFunction : Value() {
-    abstract fun call(args: List<Value>): Value
+abstract class FuncionIncorporada : Valor() {
+    abstract fun llamar(args: List<Valor>): Valor
 }
 
-/* Es una tabla de símbolos con alcance léxico.
-define(): define un nuevo nombre.
-lookup(): busca un símbolo, recursivamente en entornos padres.
-extend(): crea un nuevo entorno anidado (para funciones).
-*/
-class Environment(private val outer: Environment? = null) {
-    private val values = mutableMapOf<String, Value>()
-
-    fun define(name: String, value: Value) {
-        values[name] = value
-    }
-
-    fun lookup(name: String): Value {
-        return values[name] ?: outer?.lookup(name)
-            ?: error("Unbound identifier: $name")
-    }
-
-    fun extend(): Environment = Environment(this)
-}
-
-/* Evalúa expresiones:
-Si es Atom: puede ser un número, booleano o símbolo (variable).
-Si es ListExpr: evalúa según el primer elemento. 
-*/
-class Evaluator {
-    fun eval(expr: Expr, env: Environment): Value = when (expr) {
-        is Expr.Atom -> parseAtom(expr.value, env)
-        is Expr.ListExpr -> evalList(expr.elements, env)
-    }
-
-    private fun parseAtom(token: String, env: Environment): Value =
-        when (token) {
-            "#t" -> Value.Bool(true)
-            "#f" -> Value.Bool(false)
-            else -> token.toIntOrNull()?.let { Value.Number(it) }
-                ?: env.lookup(token)
-        }
-
-    private fun evalList(elements: List<Expr>, env: Environment): Value {
-        if (elements.isEmpty()) error("Empty expression")
-        val first = elements.first()
-        val args = elements.drop(1)
-
-        if (first is Expr.Atom) {
-            return when (first.value) {
-                "define" -> { //define una variable.
-                    val name = (args[0] as Expr.Atom).value
-                    val value = eval(args[1], env)
-                    env.define(name, value)
-                    Value.Symbol(name)
-                }
-                "lambda" -> { //crea una función.
-                    val params = (args[0] as Expr.ListExpr).elements.map { (it as Expr.Atom).value }
-                    val body = args[1]
-                    Value.Function(params, body, env)
-                }
-                "if" -> { //condicional.
-                    val condition = eval(args[0], env)
-                    val branch = if ((condition as Value.Bool).value) args[1] else args[2]
-                    eval(branch, env)
-                }
-                else -> { // se asume una llamada a función, se evalúan los argumentos y se llama.
-                    val func = eval(first, env)
-                    val argVals = args.map { eval(it, env) }
-                    applyFunction(func, argVals)
-                }
-            }
-        } else {
-            val func = eval(first, env)
-            val argVals = args.map { eval(it, env) }
-            return applyFunction(func, argVals)
-        }
-    }
-	
-    /*
-    Si es una Function (lambda): crea un nuevo entorno, asigna los argumentos, y evalúa el cuerpo.
-    Si es BuiltinFunction: llama al método call.
-	Error si no es función.
-    */
-    private fun applyFunction(func: Value, args: List<Value>): Value {
-        return when (func) {
-            is Value.Function -> {
-                val localEnv = func.env.extend()
-                func.params.zip(args).forEach { (param, arg) -> localEnv.define(param, arg) }
-                eval(func.body, localEnv)
-            }
-            is BuiltinFunction -> func.call(args)
-            else -> error("Not a function: $func")
-        }
-    }
-}
-
-/* Define funciones nativas de Racket (Funciones incorporadas):
-Aritméticas: +, -, *, /, %
-Lógicas: and, or, not, equal?
-Comparaciones: <, >, <=, >=
-*/
-object Builtins {
-    val builtins: Map<String, BuiltinFunction> = mapOf(
-        "+" to object : BuiltinFunction() {
-            override fun call(args: List<Value>) =
-                Value.Number(args.sumOf { (it as Value.Number).value })
+object Incorporadas {
+    val funciones: Map<String, FuncionIncorporada> = mapOf(
+        "+" to object : FuncionIncorporada() {
+            override fun llamar(args: List<Valor>) = Valor.Numero(args.sumOf { (it as Valor.Numero).valor })
         },
-        "-" to object : BuiltinFunction() {
-            override fun call(args: List<Value>) =
-                Value.Number(args.map { (it as Value.Number).value }.reduce(Int::minus))
+        "-" to object : FuncionIncorporada() {
+            override fun llamar(args: List<Valor>) =
+                Valor.Numero(args.map { (it as Valor.Numero).valor }.reduce(Int::minus))
         },
-        "*" to object : BuiltinFunction() {
-            override fun call(args: List<Value>) =
-                Value.Number(args.map { (it as Value.Number).value }.reduce(Int::times))
+        "*" to object : FuncionIncorporada() {
+            override fun llamar(args: List<Valor>) =
+                Valor.Numero(args.map { (it as Valor.Numero).valor }.reduce(Int::times))
         },
-        "/" to object : BuiltinFunction() {
-            override fun call(args: List<Value>) =
-                Value.Number(args.map { (it as Value.Number).value }.reduce(Int::div))
+        "/" to object : FuncionIncorporada() {
+            override fun llamar(args: List<Valor>) =
+                Valor.Numero(args.map { (it as Valor.Numero).valor }.reduce(Int::div))
         },
-        "%" to object : BuiltinFunction() {
-            override fun call(args: List<Value>) =
-                Value.Number(args.map { (it as Value.Number).value }.reduce(Int::rem))
+        "%" to object : FuncionIncorporada() {
+            override fun llamar(args: List<Valor>) =
+                Valor.Numero(args.map { (it as Valor.Numero).valor }.reduce(Int::rem))
         },
-        "equal?" to object : BuiltinFunction() {
-            override fun call(args: List<Value>) = Value.Bool(args[0] == args[1])
+        "equal?" to object : FuncionIncorporada() {
+            override fun llamar(args: List<Valor>) = Valor.Booleano(args[0] == args[1])
         },
-        "not" to object : BuiltinFunction() {
-            override fun call(args: List<Value>) =
-                Value.Bool(!(args[0] as Value.Bool).value)
+        "not" to object : FuncionIncorporada() {
+            override fun llamar(args: List<Valor>) = Valor.Booleano(!(args[0] as Valor.Booleano).valor)
         },
-        "and" to object : BuiltinFunction() {
-            override fun call(args: List<Value>) =
-                Value.Bool(args.all { (it as Value.Bool).value })
+        "and" to object : FuncionIncorporada() {
+            override fun llamar(args: List<Valor>) = Valor.Booleano(args.all { (it as Valor.Booleano).valor })
         },
-        "or" to object : BuiltinFunction() {
-            override fun call(args: List<Value>) =
-                Value.Bool(args.any { (it as Value.Bool).value })
+        "or" to object : FuncionIncorporada() {
+            override fun llamar(args: List<Valor>) = Valor.Booleano(args.any { (it as Valor.Booleano).valor })
         },
-        "<" to object : BuiltinFunction() {
-            override fun call(args: List<Value>) =
-                Value.Bool((args[0] as Value.Number).value < (args[1] as Value.Number).value)
+        "<" to object : FuncionIncorporada() {
+            override fun llamar(args: List<Valor>) =
+                Valor.Booleano((args[0] as Valor.Numero).valor < (args[1] as Valor.Numero).valor)
         },
-        "<=" to object : BuiltinFunction() {
-            override fun call(args: List<Value>) =
-                Value.Bool((args[0] as Value.Number).value <= (args[1] as Value.Number).value)
+        "<=" to object : FuncionIncorporada() {
+            override fun llamar(args: List<Valor>) =
+                Valor.Booleano((args[0] as Valor.Numero).valor <= (args[1] as Valor.Numero).valor)
         },
-        ">" to object : BuiltinFunction() {
-            override fun call(args: List<Value>) =
-                Value.Bool((args[0] as Value.Number).value > (args[1] as Value.Number).value)
+        ">" to object : FuncionIncorporada() {
+            override fun llamar(args: List<Valor>) =
+                Valor.Booleano((args[0] as Valor.Numero).valor > (args[1] as Valor.Numero).valor)
         },
-        ">=" to object : BuiltinFunction() {
-            override fun call(args: List<Value>) =
-                Value.Bool((args[0] as Value.Number).value >= (args[1] as Value.Number).value)
+        ">=" to object : FuncionIncorporada() {
+            override fun llamar(args: List<Valor>) =
+                Valor.Booleano((args[0] as Valor.Numero).valor >= (args[1] as Valor.Numero).valor)
         }
     )
 }
 
-/* Se encarga de unir todo:
-	Usa parser + evaluator + entorno global con funciones nativas.
-	run(): toma código como string, lo parsea y evalúa en orden.
- */
-class Interpreter {
-    private val parser = SExprParser()
-    private val evaluator = Evaluator()
-    private val globalEnv = Environment().apply {
-        Builtins.builtins.forEach { (name, fn) -> define(name, fn) }
+class Entorno(private val exterior: Entorno? = null) : IEntorno {
+    private val valores = mutableMapOf<String, Valor>()
+
+    override fun definir(nombre: String, valor: Valor) {
+        valores[nombre] = valor
     }
 
-    fun run(code: String): String {
-        val exprs = parser.parse(code)
-        var result: Value = Value.Undefined
-        for (expr in exprs) {
-            result = evaluator.eval(expr, globalEnv)
+    override fun buscar(nombre: String): Valor {
+        return valores[nombre] ?: exterior?.buscar(nombre)
+            ?: error("Identificador no definido: $nombre")
+    }
+
+    override fun extender(): Entorno = Entorno(this)
+}
+
+class Evaluador : IEvaluador {
+    override fun evaluar(expresion: Expresion, entorno: Entorno): Valor = when (expresion) {
+        is Expresion.Atomo -> interpretarAtomo(expresion.valor, entorno)
+        is Expresion.Lista -> evaluarLista(expresion.elementos, entorno)
+    }
+
+    private fun interpretarAtomo(token: String, entorno: Entorno): Valor =
+        when (token) {
+            "#t" -> Valor.Booleano(true)
+            "#f" -> Valor.Booleano(false)
+            else -> token.toIntOrNull()?.let { Valor.Numero(it) } ?: entorno.buscar(token)
         }
-        return result.toString()
+
+    private fun evaluarLista(elementos: List<Expresion>, entorno: Entorno): Valor {
+        if (elementos.isEmpty()) error("Expresión vacía")
+        val primero = elementos.first()
+        val argumentos = elementos.drop(1)
+
+        if (primero is Expresion.Atomo) {
+            return when (primero.valor) {
+                "define" -> {
+                    val nombre = (argumentos[0] as Expresion.Atomo).valor
+                    val valor = evaluar(argumentos[1], entorno)
+                    entorno.definir(nombre, valor)
+                    Valor.Simbolo(nombre)
+                }
+                "lambda" -> {
+                    val parametros = (argumentos[0] as Expresion.Lista).elementos.map { (it as Expresion.Atomo).valor }
+                    val cuerpo = argumentos[1]
+                    Valor.Funcion(parametros, cuerpo, entorno)
+                }
+                "if" -> {
+                    val condicion = evaluar(argumentos[0], entorno)
+                    val rama = if ((condicion as Valor.Booleano).valor) argumentos[1] else argumentos[2]
+                    evaluar(rama, entorno)
+                }
+                else -> {
+                    val funcion = evaluar(primero, entorno)
+                    val valoresArgs = argumentos.map { evaluar(it, entorno) }
+                    aplicarFuncion(funcion, valoresArgs)
+                }
+            }
+        } else {
+            val funcion = evaluar(primero, entorno)
+            val valoresArgs = argumentos.map { evaluar(it, entorno) }
+            return aplicarFuncion(funcion, valoresArgs)
+        }
+    }
+
+    private fun aplicarFuncion(funcion: Valor, argumentos: List<Valor>): Valor {
+        return when (funcion) {
+            is Valor.Funcion -> {
+                val entornoLocal = funcion.entorno.extender()
+                funcion.parametros.zip(argumentos).forEach { (param, arg) -> entornoLocal.definir(param, arg) }
+                evaluar(funcion.cuerpo, entornoLocal)
+            }
+            is FuncionIncorporada -> funcion.llamar(argumentos)
+            else -> error("No es una función: $funcion")
+        }
     }
 }
 
+class Interpreter : IInterprete {
+    private val parser: IParserExpr = ParserSExpresion()
+    private val evaluador: IEvaluador = Evaluador()
+    private val entornoGlobal: Entorno = Entorno().apply {
+        Incorporadas.funciones.forEach { (nombre, fn) -> definir(nombre, fn) }
+    }
+
+    override fun run(codigo: String): String {
+        val expresiones = parser.parsear(codigo)
+        var resultado: Valor = Valor.Indefinido
+        for (expresion in expresiones) {
+            resultado = evaluador.evaluar(expresion, entornoGlobal)
+        }
+        return resultado.toString()
+    }
+}
 
 fun main() {
-    // given
-  	val interpreter = Interpreter()
-    val code = """
-     	(define CERO 0)
-       	CERO
-   	""".trimIndent()
+    val interpreter = Interpreter()
+    val codigo = """
+        (define fib (lambda (n) (if (or (equal? n 0) (equal? n 1)) 1 (+ (fib (- n 1)) (fib (- n 2))))) )
+        (fib 5)
+    """.trimIndent()
 
-   	// when
-  	val result = interpreter.run(code) //Debería imprimir 0
-    println(result)
+    println(interpreter.run(codigo)) // Debería imprimir: 8
 }
