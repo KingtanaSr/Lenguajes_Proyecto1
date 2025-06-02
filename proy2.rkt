@@ -27,3 +27,33 @@
       (cons (cons variable valor) asociaciones)
       asociaciones)) 
 (trace asociar)
+
+(define (es-regla? lista)
+  (and (not (null? lista))
+       (eq? (first lista) ':-)))
+
+(define (es-hecho? lista)
+  (let ((n (length lista)))
+    (cond
+      [(es-regla? lista) #f]
+      [(or (= n 2) (= n 3)) #t]
+      [else #f])))
+
+(define (functor lista)
+  (first lista))
+
+(define (terminos lista)
+  (cdr lista))
+
+(define(aridad lista)
+  (length (cdr lista)))
+
+(define (encabezado-regla lista)
+  (second lista))
+
+(define (condiciones-regla lista)
+  (cdr (cdr lista)))
+
+;;(trace unificar)
+;;(trace instanciar)
+;;(trace buscar)
