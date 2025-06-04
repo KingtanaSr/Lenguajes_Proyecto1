@@ -47,8 +47,13 @@
 (define (encabezado-regla lista)
   (second lista))
 
-(define (condiciones-regla lista)
-  (cdr (cdr lista)))
+(define (condiciones-regla regla)
+  (let ((conds (third regla))) ; tercer elemento, lista de condiciones anidadas
+    (if (and (list? conds)
+             (= (length conds) 1)
+             (list? (first conds))) ; si es lista anidada de un solo elemento
+        (first conds)            ; desanida
+        conds)))                 ; sino retorna igual
 
 (define (lista-variables-internas lista)
   (foldr (lambda (par acc)
@@ -121,12 +126,6 @@
 
 
 ;; RESOLUCIÓN (BUSCAR)
-(define (buscar meta programa incognitas asociaciones)
-  (apply append
-         (map (lambda (regla-o-hecho)
-                (resolver meta regla-o-hecho programa incognitas asociaciones))
-              programa)))
-
 (define (resolver meta regla programa incognitas asociaciones)
   (cond
     [(es-hecho? regla)
@@ -135,34 +134,44 @@
            (list (filtrar-asociaciones incognitas nueva))
            '()))]
     [(es-regla? regla)
-     (let* ((enc (encabezado-regla regla))
-            (conds (condiciones-regla regla))
-            (nueva-var (generar-variable-interna asociaciones))
-            (renombrada (renombrar-regla (list enc) conds nueva-var '()))
-            (enc-ren (car renombrada))
-            (conds-ren (cadr renombrada)))
-       (let ((nuevo-asoc (unificar meta enc-ren asociaciones)))
-         (if nuevo-asoc
-             (buscar-condiciones conds-ren programa incognitas nuevo-asoc)
-             '())))]
+     (let* ((regla-renombrada (renombrar-regla regla))
+            (enc-ren (first regla-renombrada))
+            (conds-ren (rest regla-renombrada))
+            (nuevo-asoc (unificar meta enc-ren asociaciones)))
+       (displayln "Encabezado renombrado:")
+       (displayln enc-ren)
+       (displayln "Condiciones renombradas:")
+       (displayln conds-ren)
+       (if nuevo-asoc
+           (buscar-condiciones conds-ren programa incognitas nuevo-asoc)
+           '()))]
     [else '()]))
 
+(define (buscar meta programa incognitas asociaciones)
+  (let ((resultados (map (lambda (regla-o-hecho)
+                          (resolver meta regla-o-hecho programa incognitas asociaciones))
+                        programa)))
+    (if (null? resultados)
+        '()
+        (apply append resultados))))
+
 (define (buscar-condiciones condiciones programa incognitas asociaciones)
-  (cond
-    [(null? condiciones)
-     (list (filtrar-asociaciones incognitas asociaciones))]
-    [else
-     (apply append
-            (map (lambda (nuevo-asoc)
-                   (buscar-condiciones (cdr condiciones) programa incognitas nuevo-asoc))
-                 (buscar (car condiciones) programa incognitas asociaciones)))]))
+  (if (null? condiciones)
+      (list (filtrar-asociaciones incognitas asociaciones))
+      (apply append
+             (map (lambda (nuevo-asoc)
+                    (buscar-condiciones (cdr condiciones) programa incognitas nuevo-asoc))
+                  (buscar (car condiciones) programa incognitas asociaciones)))))
 
-(define (filtrar-asociaciones _ asociaciones)
-  (map (lambda (p)
-         (cons (car p) (instanciar (car p) asociaciones)))
-       asociaciones))
+(define (filtrar-asociaciones incognitas asociaciones)
+  (define (instanciar-profundo var)
+    (let ((val (instanciar var asociaciones)))
+      (if (equal? val var) val (instanciar-profundo val))))
+  (map (lambda (v)
+         (cons v (instanciar-profundo v)))
+       incognitas))
 
-(define (renombrar-regla encabezado condiciones nueva-var _)
+(define (renombrar-regla regla)
   (define (renombrar-term term tabla)
     (cond
       [(es-variable? term)
@@ -182,19 +191,23 @@
                  (loop (cdr ts) (cons nuevo-term res) nuevo-tabla)))))]
       [else (values term tabla)]))
 
-  (let* ((tabla '())
-         (enc-ren
-          (call-with-values
-              (lambda () (renombrar-term (car encabezado) tabla))
-            (lambda (nuevo-enc nueva-tabla)
-              (let loop ((conds condiciones) (res '()) (t nueva-tabla))
-                (if (null? conds)
-                    (list (list nuevo-enc) (reverse res))
-                    (call-with-values
-                        (lambda () (renombrar-term (car conds) t))
-                      (lambda (nuevo-cond nt)
-                        (loop (cdr conds) (cons nuevo-cond res) nt)))))))))
-    enc-ren))
+  (let ((_ (first regla))
+        (encabezado (second regla))
+        (condiciones (third regla)))
+    (call-with-values
+      (lambda () (renombrar-term encabezado '()))
+      (lambda (nuevo-enc tabla-final)
+        (define (renombrar-condiciones conds tabla acc)
+          (if (null? conds)
+              (values (reverse acc) tabla)
+              (call-with-values
+                  (lambda () (renombrar-term (car conds) tabla))
+                (lambda (nuevo-cond nueva-tabla)
+                  (renombrar-condiciones (cdr conds) nueva-tabla (cons nuevo-cond acc))))))
+        (call-with-values
+            (lambda () (renombrar-condiciones condiciones tabla-final '()))
+          (lambda (nuevas-condiciones _)
+            (cons nuevo-enc nuevas-condiciones)))))))
 
 ;; INTÉRPRETE
 (define (extraer-incognitas meta)
@@ -207,13 +220,15 @@
       [else acc]))
   (rec meta '()))
 
+(define (flatten-once lst)
+  (apply append lst))
 
 (define (?- meta programa)
   (let* ((incognitas (extraer-incognitas meta))
          (soluciones (buscar meta programa incognitas '())))
     (if (null? soluciones)
         #f
-        soluciones)))
+        (flatten-once soluciones))))
 
 ;; PRUEBA
 (define dbz
@@ -235,11 +250,4 @@
     )
   )
 
-(?- '(padre ?x pan) dbz)
-;;'((?x . gohan)) FUNCIONA
-(?- '(progenitora ?x goten) dbz)
-;;'((?x . goku) (?x . chichi)) -> #f
-(?- '(igual a b) dbz)
-;;#f FUNCIONA
-(?- '(igual a a) dbz)
-;;'((?x . a)) FUNCIONA
+(?- '(padre goku ?hijo) dbz)
