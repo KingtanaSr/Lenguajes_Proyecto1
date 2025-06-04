@@ -146,19 +146,27 @@
   (let* ((a1 (instanciar a asociaciones))
          (b1 (instanciar b asociaciones)))
     (cond
-      [(equal? a1 b1) asociaciones]
+      ;; Son iguales: si son átomos o estructuras iguales, no hacer nada
+      [(equal? a1 b1)
+       (if (es-variable-interna? a1)
+           asociaciones
+           (asociar a1 b1 asociaciones))]
+
+      ;; a1 es variable
       [(es-variable? a1)
-       (let ((binding (assoc a1 asociaciones)))
-         (if binding
-             (unificar (cdr binding) b1 asociaciones)
-             (asociar a1 b1 asociaciones)))]
+       (asociar a1 b1 asociaciones)]
+
+      ;; b1 es variable
       [(es-variable? b1)
-       (unificar b1 a1 asociaciones)]
+       (asociar b1 a1 asociaciones)]
+
+      ;; listas iguales en longitud: intentar unificar sus elementos
       [(and (list? a1) (list? b1)
             (= (length a1) (length b1)))
        (unificar-listas a1 b1 asociaciones)]
-      [else #f])))
 
+      ;; cualquier otro caso: no unificable
+      [else #f])))
 
 (define (unificar-listas la lb asociaciones)
   (cond
@@ -296,5 +304,4 @@
     )
   )
 
-(instanciar '(:- (progenitora ?x  ?y) ((padre ?x ?y)))
-                           '((?z . a)))
+(unificar '(ancestra ?x pan) '(ancestra ?x ?y) '())
