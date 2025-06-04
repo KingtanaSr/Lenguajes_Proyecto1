@@ -80,7 +80,7 @@
       asociaciones)) 
 (trace asociar)
 
-
+;; UNIFICACIÓN
 (define (instanciar elemento asociaciones)
   (cond
     [(es-variable? elemento)
@@ -120,12 +120,12 @@
            #f))]))
 
 
+;; RESOLUCIÓN (BUSCAR)
 (define (buscar meta programa incognitas asociaciones)
   (apply append
          (map (lambda (regla-o-hecho)
                 (resolver meta regla-o-hecho programa incognitas asociaciones))
               programa)))
-
 
 (define (resolver meta regla programa incognitas asociaciones)
   (cond
@@ -162,29 +162,41 @@
          (cons (car p) (instanciar (car p) asociaciones)))
        asociaciones))
 
-(define (renombrar-regla encabezado condiciones nueva-var contador)
+(define (renombrar-regla encabezado condiciones nueva-var _)
   (define (renombrar-term term tabla)
     (cond
       [(es-variable? term)
-       (cond
-         [(assoc term tabla) (cdr (assoc term tabla))]
-         [else
-          (let* ((nuevo (generar-variable-interna tabla)))
-            (cons nuevo (cons (cons term nuevo) tabla)))])]
-      [(list? term) (map (lambda (t) (renombrar-term t tabla)) term)]
-      [else term]))
+       (let ((par (assoc term tabla)))
+         (if par
+             (values (cdr par) tabla)
+             (let* ((nuevo (generar-variable-interna tabla))
+                    (nueva-tabla (cons (cons term nuevo) tabla)))
+               (values nuevo nueva-tabla))))]
+      [(list? term)
+       (let loop ((ts term) (res '()) (t tabla))
+         (if (null? ts)
+             (values (reverse res) t)
+             (call-with-values
+                 (lambda () (renombrar-term (car ts) t))
+               (lambda (nuevo-term nuevo-tabla)
+                 (loop (cdr ts) (cons nuevo-term res) nuevo-tabla)))))]
+      [else (values term tabla)]))
 
-  (define (renombrar-cond cond tabla)
-    (map (lambda (term) (renombrar-term term tabla)) cond))
+  (let* ((tabla '())
+         (enc-ren
+          (call-with-values
+              (lambda () (renombrar-term (car encabezado) tabla))
+            (lambda (nuevo-enc nueva-tabla)
+              (let loop ((conds condiciones) (res '()) (t nueva-tabla))
+                (if (null? conds)
+                    (list (list nuevo-enc) (reverse res))
+                    (call-with-values
+                        (lambda () (renombrar-term (car conds) t))
+                      (lambda (nuevo-cond nt)
+                        (loop (cdr conds) (cons nuevo-cond res) nt)))))))))
+    enc-ren))
 
-  (let loop ((tabla '())
-             (enc encabezado)
-             (conds condiciones))
-    (let* ((nuevo-enc (renombrar-term enc tabla))
-           (nuevo-conds (map (lambda (c) (renombrar-term c tabla)) conds)))
-      (list nuevo-enc nuevo-conds))))
-
-
+;; INTÉRPRETE
 (define (extraer-incognitas meta)
   (define (rec term acc)
     (cond
@@ -203,6 +215,7 @@
         #f
         soluciones)))
 
+;; PRUEBA
 (define dbz
   '((igual ?x ?x)
     (padre bardock goku)
@@ -222,4 +235,11 @@
     )
   )
 
+(?- '(padre ?x pan) dbz)
+;;'((?x . gohan)) FUNCIONA
+(?- '(progenitora ?x goten) dbz)
+;;'((?x . goku) (?x . chichi)) -> #f
 (?- '(igual a b) dbz)
+;;#f FUNCIONA
+(?- '(igual a a) dbz)
+;;'((?x . a)) FUNCIONA
