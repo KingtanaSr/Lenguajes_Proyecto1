@@ -17,10 +17,13 @@
       [else #t])))
 
 (define (es-variable-interna? x)
-  (let* ([str (if (symbol? x) (symbol->string x) x)]
-         [lst (string->list str)])
-    (and (char=? (first lst) #\?)
-         (char=? (second lst) #\_))))
+  (and (symbol? x)
+       (let* ([str (symbol->string x)]
+              [lst (string->list str)])
+         (and (>= (length lst) 2)
+              (char=? (first lst) #\?)
+              (char=? (second lst) #\_)))))
+
 
 (define (asociar variable valor asociaciones)
   (if (es-variable? variable)
@@ -54,6 +57,32 @@
 (define (condiciones-regla lista)
   (cdr (cdr lista)))
 
+(define (lista-variables-internas lista)
+  (foldr (lambda (par acc)
+           (let* ((a (car par))
+                  (d (cdr par))
+                  (acc1 (if (es-variable-interna? a) (cons a acc) acc))
+                  (acc2 (if (es-variable-interna? d) (cons d acc1) acc1)))
+             (remove-duplicates acc2)))
+         '()
+         lista))
+
+(define (num-var-interna x)
+  (let* ([str (if (symbol? x) (symbol->string x) x)])
+    (string->number (substring str 2))))
+
+
+(define (generar-variable-interna lista)
+  (let* ([listav (lista-variables-internas lista)]
+         [numeros (map num-var-interna listav)]
+         [maximo (if (null? numeros) 0 (apply max numeros))]
+         [nuevo-num (+ 1 maximo)]
+         [nuevo-simbolo (string->symbol (string-append "?_" (number->string nuevo-num)))])
+    nuevo-simbolo))
+
+;(define (unificar términoA términoB asociaciones)
+  
+ ; (else #f))
 ;;(trace unificar)
 ;;(trace instanciar)
 ;;(trace buscar)
