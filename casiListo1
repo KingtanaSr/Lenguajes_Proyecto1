@@ -1,5 +1,9 @@
 #lang racket
 (require racket/trace)
+(require rackunit)
+(require rackunit/text-ui)
+
+
 
 (define (es-variable? x)
   (cond
@@ -303,5 +307,3 @@
     (:- (ancestra ?x ?y) ((ancestra ?x ?p) (progenitora ?p ?y)))
     )
   )
-
-(unificar '(ancestra ?x pan) '(ancestra ?x ?y) '())
